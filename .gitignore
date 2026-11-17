@@ -1,0 +1,20 @@
+Python files
+
+pycache/
+*.pyc
+.venv/
+venv/
+
+Private credentials
+
+.env
+.env.*
+
+Generated videos
+
+output/
+temp/
+
+System files
+
+.DS_Store
