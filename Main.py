@@ -2,6 +2,7 @@
 import csv
 import json
 import os
+import re
 import time
 import urllib.request
 import urllib.error
@@ -10,6 +11,14 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime, timezone
 
+
+# ==========================================
+# TRENDCLIP DAILY SETTINGS
+# ==========================================
+
+OUT = Path("output")
+
+MODEL = "gemini-3.5-flash-lite"
 
 FEEDS = [
     (
@@ -22,8 +31,12 @@ FEEDS = [
     ),
 ]
 
-MODEL = "gemini-3.5-flash-lite"
+MAX_TOPICS = 5
 
+
+# ==========================================
+# COLLECT TRENDING TOPICS
+# ==========================================
 
 def get_trends():
     results = []
@@ -39,10 +52,11 @@ def get_trends():
 
             with urllib.request.urlopen(
                 request,
-                timeout=20
+                timeout=30
             ) as response:
                 root = ET.fromstring(response.read())
 
+            # RSS feeds
             for item in root.findall(".//item"):
                 title = (
                     item.findtext("title") or ""
@@ -59,23 +73,24 @@ def get_trends():
                         link
                     ])
 
-            ns = {
+            # Atom feeds
+            namespace = {
                 "a": "http://www.w3.org/2005/Atom"
             }
 
             for entry in root.findall(
                 ".//a:entry",
-                ns
+                namespace
             ):
                 title = entry.findtext(
                     "a:title",
                     default="",
-                    namespaces=ns
+                    namespaces=namespace
                 ).strip()
 
                 link_node = entry.find(
                     "a:link",
-                    ns
+                    namespace
                 )
 
                 link = (
@@ -91,7 +106,10 @@ def get_trends():
                         link
                     ])
 
-            print(source, "checked successfully")
+            print(
+                source,
+                "checked successfully"
+            )
 
         except Exception as error:
             print(
@@ -111,6 +129,73 @@ def get_trends():
     return list(unique.values())
 
 
+# ==========================================
+# SAVE TRENDING TOPICS
+# ==========================================
+
+def save_trends(trends):
+    OUT.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with open(
+        OUT / "trends.csv",
+        "w",
+        newline="",
+        encoding="utf-8"
+    ) as file:
+
+        writer = csv.writer(file)
+
+        writer.writerow([
+            "Source",
+            "Trending Topic",
+            "Link"
+        ])
+
+        writer.writerows(trends)
+
+    with open(
+        OUT / "video_ideas.txt",
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(
+            "TRENDCLIP DAILY - VIDEO IDEAS\n\n"
+        )
+
+        file.write(
+            "Research leads only. "
+            "Verify facts before publishing.\n\n"
+        )
+
+        for number, (
+            source,
+            title,
+            link
+        ) in enumerate(trends[:20], 1):
+
+            file.write(
+                f"{number}. {title}\n"
+            )
+
+            file.write(
+                f"Source: {source}\n"
+            )
+
+            file.write(
+                f"Link: {link}\n\n"
+            )
+
+    print("Trending topics saved.")
+
+
+# ==========================================
+# GENERATE AI SCRIPTS
+# ==========================================
+
 def create_ai_scripts(trends):
     api_key = os.environ.get(
         "GEMINI_API_KEY"
@@ -121,7 +206,7 @@ def create_ai_scripts(trends):
             "GEMINI_API_KEY secret is missing."
         )
 
-    selected = trends[:5]
+    selected = trends[:MAX_TOPICS]
 
     if not selected:
         raise RuntimeError(
@@ -142,53 +227,58 @@ for TrendClip Daily, an English-language
 YouTube Shorts channel.
 
 Create one original YouTube Shorts script
-for each of these five trend leads:
+for EACH of these trend leads:
 
 {topic_list}
 
-LANGUAGE REQUIREMENTS:
-- Write EVERYTHING in natural English.
-- Use American English spelling and grammar.
-- Titles must be English.
-- Narration must be English.
-- Captions must be English.
-- Descriptions must be English.
-- Hashtags must be appropriate for an
-  English-language audience.
-- Never insert foreign-language phrases,
-  subtitles, or translations.
+LANGUAGE:
+- Use natural American English.
+- Write everything in English.
+- Use clear, simple spoken language.
 - Do not mix languages.
-- Use clear, simple wording.
 
-For EACH topic provide:
+FOR EACH TOPIC INCLUDE:
 
 1. Catchy YouTube Shorts title.
-2. Opening hook that grabs attention.
-3. Original narration designed for a
-   30-45 second video.
-4. Three suggested visual scenes that can
-   be created with original or licensed material.
+2. Opening hook.
+3. Original narration for a 30-45 second video.
+4. Three suggested visual scenes.
 5. Short on-screen captions.
-6. Description and relevant hashtags.
-7. A fact-check note listing what needs
-   verification before publishing.
+6. Description and hashtags.
+7. Fact-check note.
 
-IMPORTANT RULES:
-- Treat trends as research leads,
-  not verified facts.
-- Never invent facts, quotes, dates,
-  or statistics.
-- Clearly flag claims that need checking.
-- Add original commentary and storytelling.
-- Do not copy social media posts or
-  other creators' scripts.
-- Do not recommend downloading or
-  reposting copyrighted videos.
-- Make scripts engaging, natural,
-  and easy to narrate.
-- Separate each script clearly.
-- Keep narration suitable for spoken English.
-- Avoid unusual symbols and complicated words.
+CRITICAL FORMATTING REQUIREMENTS:
+
+For EVERY topic, the narration MUST be
+surrounded by these exact markers:
+
+[[NARRATION_START]]
+Put the complete spoken narration here.
+[[NARRATION_END]]
+
+Do not change the spelling of these markers.
+Do not put the markers inside Markdown code blocks.
+Do not put titles, captions, visual scenes,
+or descriptions inside the narration markers.
+
+Create exactly five scripts when five topics
+are supplied.
+
+The narration must:
+- Be a complete spoken script.
+- Be at least 80 characters long.
+- Be suitable for AI voice generation.
+- Avoid bullet points.
+- Avoid stage directions.
+- Avoid complicated symbols.
+
+IMPORTANT CONTENT RULES:
+- Treat trends as research leads, not verified facts.
+- Never invent facts, quotes, dates, or statistics.
+- Flag claims that need verification.
+- Do not copy other creators' scripts.
+- Do not recommend reposting copyrighted videos.
+- Use original commentary and storytelling.
 """
 
     payload = {
@@ -202,7 +292,7 @@ IMPORTANT RULES:
             }
         ],
         "generationConfig": {
-            "maxOutputTokens": 6000,
+            "maxOutputTokens": 8000,
             "temperature": 0.7
         }
     }
@@ -241,11 +331,13 @@ IMPORTANT RULES:
                     response.read().decode("utf-8")
                 )
 
-            print("Gemini responded successfully!")
+            print(
+                "Gemini responded successfully!"
+            )
+
             break
 
         except urllib.error.HTTPError as error:
-
             details = error.read().decode(
                 "utf-8",
                 errors="replace"
@@ -258,8 +350,8 @@ IMPORTANT RULES:
                 wait_seconds = 15 * (2 ** attempt)
 
                 print(
-                    f"Gemini temporarily unavailable "
-                    f"(HTTP {error.code})."
+                    f"Gemini temporarily unavailable: "
+                    f"HTTP {error.code}"
                 )
 
                 print(
@@ -271,13 +363,10 @@ IMPORTANT RULES:
 
             raise RuntimeError(
                 f"Gemini API returned HTTP "
-                f"{error.code} after "
-                f"{attempt + 1} attempt(s): "
-                f"{details}"
+                f"{error.code}: {details}"
             )
 
         except urllib.error.URLError as error:
-
             if attempt < 4:
                 wait_seconds = 15 * (2 ** attempt)
 
@@ -294,13 +383,12 @@ IMPORTANT RULES:
                 continue
 
             raise RuntimeError(
-                f"Gemini connection failed "
-                f"after 5 attempts: {error}"
+                f"Gemini connection failed: {error}"
             )
 
     if result is None:
         raise RuntimeError(
-            "Gemini failed after 5 attempts."
+            "Gemini failed after five attempts."
         )
 
     candidates = result.get(
@@ -335,94 +423,166 @@ IMPORTANT RULES:
     return scripts
 
 
-def main():
-    print("TRENDCLIP DAILY")
-    print("ENGLISH-ONLY SCRIPT GENERATION")
+# ==========================================
+# EXTRACT NARRATION
+# ==========================================
+
+def extract_first_narration(scripts):
+    pattern = re.compile(
+        r"\[\[NARRATION_START\]\]"
+        r"(.*?)"
+        r"\[\[NARRATION_END\]\]",
+        re.I | re.S
+    )
+
+    matches = pattern.findall(scripts)
+
+    if not matches:
+        raise RuntimeError(
+            "Gemini did not return narration markers. "
+            "The full AI response was saved for inspection."
+        )
+
+    narration = matches[0]
+
+    narration = re.sub(
+        r"\s+",
+        " ",
+        narration
+    ).strip()
+
+    if len(narration) < 80:
+        raise RuntimeError(
+            "The first narration is too short."
+        )
 
     print(
-        "Research:",
+        "Narration extracted successfully."
+    )
+
+    print(
+        "Narration length:",
+        len(narration),
+        "characters"
+    )
+
+    return narration
+
+
+# ==========================================
+# SAVE ALL SCRIPTS AND VIDEO NARRATION
+# ==========================================
+
+def save_scripts(scripts):
+    OUT.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # Preserve the complete Gemini response.
+    full_script_path = (
+        OUT / "all_shorts_scripts.txt"
+    )
+
+    full_script_path.write_text(
+        scripts,
+        encoding="utf-8"
+    )
+
+    print(
+        "All five scripts saved."
+    )
+
+    # Extract the first video's narration.
+    narration = extract_first_narration(
+        scripts
+    )
+
+    # Write a clean file in the exact format
+    # expected by video_creator.py.
+    narration_path = (
+        OUT / "shorts_scripts.txt"
+    )
+
+    narration_path.write_text(
+        "TRENDCLIP DAILY - VIDEO SCRIPT\n\n"
+        "Original Narration:\n"
+        f"{narration}\n",
+        encoding="utf-8"
+    )
+
+    print(
+        "Video narration saved successfully."
+    )
+
+    print(
+        "Location:",
+        narration_path
+    )
+
+
+# ==========================================
+# MAIN PROGRAM
+# ==========================================
+
+def main():
+    print("================================")
+    print("       TRENDCLIP DAILY")
+    print("       AI SCRIPT GENERATOR")
+    print("================================")
+
+    print(
+        "Research time:",
         datetime.now(
             timezone.utc
         ).strftime("%Y-%m-%d %H:%M UTC")
     )
 
-    trends = get_trends()
-
-    Path("output").mkdir(
+    OUT.mkdir(
+        parents=True,
         exist_ok=True
     )
 
-    with open(
-        "output/trends.csv",
-        "w",
-        newline="",
-        encoding="utf-8"
-    ) as file:
+    print("\nCollecting trending topics...")
 
-        writer = csv.writer(file)
+    trends = get_trends()
 
-        writer.writerow([
-            "Source",
-            "Trending Topic",
-            "Link"
-        ])
-
-        writer.writerows(trends)
-
-    with open(
-        "output/video_ideas.txt",
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        file.write(
-            "TRENDCLIP DAILY - VIDEO IDEAS\n\n"
+    if not trends:
+        raise RuntimeError(
+            "No trending topics were collected. "
+            "Both trend feeds may be unavailable."
         )
-
-        file.write(
-            "Research leads only. "
-            "Verify facts before publishing.\n\n"
-        )
-
-        for number, (
-            source,
-            title,
-            link
-        ) in enumerate(trends[:20], 1):
-
-            file.write(
-                f"{number}. {title}\n"
-            )
-
-            file.write(
-                f"Source: {source}\n"
-            )
-
-            file.write(
-                f"Link: {link}\n\n"
-            )
 
     print(
         "Topics collected:",
         len(trends)
     )
 
-    scripts = create_ai_scripts(trends)
+    save_trends(trends)
 
-    with open(
-        "output/shorts_scripts.txt",
-        "w",
-        encoding="utf-8"
-    ) as file:
+    print("\nGenerating AI scripts...")
 
-        file.write(
-            "TRENDCLIP DAILY - AI SHORTS SCRIPTS\n\n"
-        )
+    scripts = create_ai_scripts(
+        trends
+    )
 
-        file.write(scripts)
+    print("\nSaving scripts...")
 
-    print("AI scripts successfully created!")
-    print("Results saved in output/")
+    save_scripts(scripts)
+
+    print("\n================================")
+    print("SUCCESS: AI SCRIPTS CREATED")
+    print("================================")
+
+    print(
+        "All scripts:",
+        OUT / "all_shorts_scripts.txt"
+    )
+
+    print(
+        "Video narration:",
+        OUT / "shorts_scripts.txt"
+    )
 
 
 if __name__ == "__main__":
