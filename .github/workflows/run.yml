@@ -1,5 +1,5 @@
 
-name: TrendClip AI Starter
+name: TrendClip Daily Video Generator
 
 on:
   workflow_dispatch:
@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get project files
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -22,29 +22,32 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install video tools
+      - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Install Python packages
-        run: pip install -r Requirements.txt
+      - name: Install Python requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Requirements.txt
 
-      - name: Generate trends and AI scripts
+      - name: Create output folder
+        run: mkdir -p output
+
+      - name: Generate trending topics and scripts
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python Main.py
 
-      - name: Create vertical YouTube Short
+      - name: Create YouTube Shorts videos
         run: python video_creator.py
 
-      - name: Save generated files
+      - name: Upload generated files, even if a step fails
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trendclip-daily-videos
-          path: |
-            output/*.mp4
-            output/*.mp3
-            output/*.txt
-            output/*.csv
-          if-no-files-found: error
+          name: trendclip-daily-files
+          path: output/
+          if-no-files-found: warn
+          retention-days: 7
