@@ -7,582 +7,357 @@ import time
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
-
 from pathlib import Path
-from datetime import datetime, timezone
-
+from urllib.parse import quote
 
 # ==========================================
-# TRENDCLIP DAILY SETTINGS
+# TRENDCLIP DAILY - CREATOR CULTURE EDITION
 # ==========================================
-
-OUT = Path("output")
 
 MODEL = "gemini-3.5-flash-lite"
 
+OUTPUT_DIR = Path("output")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Creator-focused Reddit feeds
 FEEDS = [
-    (
-        "Google Trends US",
-        "https://trends.google.com/trending/rss?geo=US"
-    ),
-    (
-        "Reddit Popular",
-        "https://www.reddit.com/r/popular/.rss"
-    ),
+    ("LivestreamFail", "https://www.reddit.com/r/LivestreamFail/.rss?limit=25"),
+    ("TikTokCringe", "https://www.reddit.com/r/TikTokCringe/.rss?limit=25"),
+    ("TikTok", "https://www.reddit.com/r/TikTok/.rss?limit=25"),
+    ("YouTubeDrama", "https://www.reddit.com/r/YouTubeDrama/.rss?limit=25"),
+    ("InfluencerDrama", "https://www.reddit.com/r/InfluencerDrama/.rss?limit=25"),
+    ("Streamers", "https://www.reddit.com/r/streamers/.rss?limit=25"),
 ]
 
-MAX_TOPICS = 5
+HEADERS = {
+    "User-Agent": "TrendClipDaily/1.0 (content research)"
+}
 
 
-# ==========================================
-# COLLECT TRENDING TOPICS
-# ==========================================
+def fetch_url(url, timeout=20):
+    request = urllib.request.Request(url, headers=HEADERS)
+
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
 
 def get_trends():
+    """Collect creator and viral-content topics from public feeds."""
     results = []
+    seen = set()
 
     for source, url in FEEDS:
         try:
-            request = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": "TrendClipDaily/1.0"
-                }
-            )
+            print(f"Checking {source}...")
 
-            with urllib.request.urlopen(
-                request,
-                timeout=30
-            ) as response:
-                root = ET.fromstring(response.read())
+            raw = fetch_url(url)
+            root = ET.fromstring(raw)
 
-            # RSS feeds
-            for item in root.findall(".//item"):
-                title = (
-                    item.findtext("title") or ""
-                ).strip()
+            for item in root.iter():
+                tag = item.tag.split("}")[-1]
 
-                link = (
-                    item.findtext("link") or ""
-                ).strip()
+                if tag not in ("item", "entry"):
+                    continue
 
-                if title:
-                    results.append([
-                        source,
-                        title,
-                        link
-                    ])
+                title = ""
+                link = ""
 
-            # Atom feeds
-            namespace = {
-                "a": "http://www.w3.org/2005/Atom"
-            }
+                for child in item:
+                    child_tag = child.tag.split("}")[-1]
 
-            for entry in root.findall(
-                ".//a:entry",
-                namespace
-            ):
-                title = entry.findtext(
-                    "a:title",
-                    default="",
-                    namespaces=namespace
-                ).strip()
+                    if child_tag == "title":
+                        title = (child.text or "").strip()
 
-                link_node = entry.find(
-                    "a:link",
-                    namespace
-                )
+                    elif child_tag == "link":
+                        link = (
+                            child.attrib.get("href", "")
+                            or (child.text or "").strip()
+                        )
 
-                link = (
-                    link_node.get("href", "")
-                    if link_node is not None
-                    else ""
-                )
+                if not title:
+                    continue
 
-                if title:
-                    results.append([
-                        source,
-                        title,
-                        link
-                    ])
+                clean_title = re.sub(r"\s+", " ", title).strip()
+                key = clean_title.lower()
 
-            print(
-                source,
-                "checked successfully"
-            )
+                if key in seen:
+                    continue
+
+                seen.add(key)
+
+                results.append({
+                    "source": source,
+                    "title": clean_title,
+                    "url": link
+                })
 
         except Exception as error:
-            print(
-                source,
-                "could not be checked:",
-                error
-            )
+            print(f"Could not read {source}: {error}")
 
-    unique = {}
+    # Keep the list manageable
+    results = results[:60]
 
-    for source, title, link in results:
-        unique.setdefault(
-            title.lower(),
-            [source, title, link]
+    if not results:
+        raise RuntimeError(
+            "No creator topics were collected. "
+            "Check the internet feeds and try again."
         )
 
-    return list(unique.values())
+    return results
 
-
-# ==========================================
-# SAVE TRENDING TOPICS
-# ==========================================
 
 def save_trends(trends):
-    OUT.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
     with open(
-        OUT / "trends.csv",
+        OUTPUT_DIR / "trends.csv",
         "w",
         newline="",
         encoding="utf-8"
     ) as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=["source", "title", "url"]
+        )
 
-        writer = csv.writer(file)
-
-        writer.writerow([
-            "Source",
-            "Trending Topic",
-            "Link"
-        ])
-
+        writer.writeheader()
         writer.writerows(trends)
 
-    with open(
-        OUT / "video_ideas.txt",
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        file.write(
-            "TRENDCLIP DAILY - VIDEO IDEAS\n\n"
-        )
-
-        file.write(
-            "Research leads only. "
-            "Verify facts before publishing.\n\n"
-        )
-
-        for number, (
-            source,
-            title,
-            link
-        ) in enumerate(trends[:20], 1):
-
-            file.write(
-                f"{number}. {title}\n"
-            )
-
-            file.write(
-                f"Source: {source}\n"
-            )
-
-            file.write(
-                f"Link: {link}\n\n"
-            )
-
-    print("Trending topics saved.")
-
-
-# ==========================================
-# GENERATE AI SCRIPTS
-# ==========================================
 
 def create_ai_scripts(trends):
-    api_key = os.environ.get(
-        "GEMINI_API_KEY"
-    )
+    api_key = os.environ.get("GEMINI_API_KEY")
 
     if not api_key:
         raise RuntimeError(
-            "GEMINI_API_KEY secret is missing."
+            "GEMINI_API_KEY is missing from GitHub Secrets."
         )
 
-    selected = trends[:MAX_TOPICS]
-
-    if not selected:
-        raise RuntimeError(
-            "No trending topics were collected."
-        )
-
-    topic_list = "\n".join(
-        f"{i}. Topic: {title}\n"
-        f"Source: {source}\n"
-        f"Link: {link}"
-        for i, (source, title, link)
-        in enumerate(selected, 1)
+    topics = "\n".join(
+        f"- Source: {item['source']}\n"
+        f"  Topic: {item['title']}\n"
+        f"  Link: {item['url']}"
+        for item in trends
     )
 
     prompt = f"""
-You are the professional scriptwriter
-for TrendClip Daily, an English-language
-YouTube Shorts channel.
+You are the head content creator for TRENDCLIP DAILY.
 
-Create one original YouTube Shorts script
-for EACH of these trend leads:
+IMPORTANT:
+This is NOT a traditional news channel.
 
-{topic_list}
+Our channel covers:
+- Popular streamers
+- TikTok creators
+- Viral livestream moments
+- Funny internet moments
+- Creator reactions
+- Creator collaborations
+- Public creator disagreements and drama
+- Viral challenges and trends
+- Gaming and entertainment creators
 
-LANGUAGE:
-- Use natural American English.
-- Write everything in English.
-- Use clear, simple spoken language.
-- Do not mix languages.
+Your job is to create FIVE entertaining YouTube Shorts scripts
+based on the supplied topics.
 
-FOR EACH TOPIC INCLUDE:
+SOURCE MATERIAL:
+{topics}
 
-1. Catchy YouTube Shorts title.
-2. Opening hook.
-3. Original narration for a 30-45 second video.
-4. Three suggested visual scenes.
-5. Short on-screen captions.
-6. Description and hashtags.
-7. Fact-check note.
+CONTENT RULES:
 
-CRITICAL FORMATTING REQUIREMENTS:
+1. Prioritize streamer and TikTok culture.
+2. Choose the most entertaining and relevant topics.
+3. Do not write traditional news reports.
+4. Write like an energetic creator talking directly to viewers.
+5. Use natural, conversational language.
+6. Start with a powerful hook that makes people stop scrolling.
+7. Keep each narration around 30-45 seconds.
+8. Make the storytelling exciting without exaggerating facts.
+9. Never invent quotes, events, or accusations.
+10. Do not present rumors as confirmed facts.
+11. If a topic lacks enough reliable information, skip it.
+12. Do not use fake engagement statistics.
+13. Avoid repeating the same topic.
+14. Do not write generic news introductions.
 
-For EVERY topic, the narration MUST be
-surrounded by these exact markers:
+STYLE EXAMPLE:
 
+"Bro, you have to see what just happened on stream.
+Everybody thought this was going to be a normal livestream,
+but then things took a completely unexpected turn..."
+
+This is only an example of tone. Do not copy it repeatedly.
+
+FOR EACH OF THE FIVE SHORTS, USE THIS FORMAT:
+
+### VIDEO 1
+Title:
+Hook:
 [[NARRATION_START]]
-Put the complete spoken narration here.
+Write the complete spoken narration here.
 [[NARRATION_END]]
 
-Do not change the spelling of these markers.
-Do not put the markers inside Markdown code blocks.
-Do not put titles, captions, visual scenes,
-or descriptions inside the narration markers.
+Suggested Visual Scenes:
+1.
+2.
+3.
 
-Create exactly five scripts when five topics
-are supplied.
+On-Screen Captions:
+1.
+2.
+3.
 
-The narration must:
-- Be a complete spoken script.
-- Be at least 80 characters long.
-- Be suitable for AI voice generation.
-- Avoid bullet points.
-- Avoid stage directions.
-- Avoid complicated symbols.
+Description:
+Hashtags:
+Source:
+Fact Check Note:
 
-IMPORTANT CONTENT RULES:
-- Treat trends as research leads, not verified facts.
-- Never invent facts, quotes, dates, or statistics.
-- Flag claims that need verification.
-- Do not copy other creators' scripts.
-- Do not recommend reposting copyrighted videos.
-- Use original commentary and storytelling.
+Repeat the same format for VIDEO 2 through VIDEO 5.
+
+IMPORTANT OUTPUT REQUIREMENTS:
+
+- Include all five videos.
+- Put narration only between the exact narration markers.
+- Do not put headings or visual directions inside narration markers.
+- Make the first video especially entertaining.
+- The narration must be ready for text-to-speech.
+- Return plain text, not JSON.
 """
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        + MODEL
+        + ":generateContent?key="
+        + quote(api_key)
+    )
 
     payload = {
         "contents": [
             {
                 "parts": [
-                    {
-                        "text": prompt
-                    }
+                    {"text": prompt}
                 ]
             }
         ],
         "generationConfig": {
-            "maxOutputTokens": 8000,
-            "temperature": 0.7
+            "temperature": 0.85,
+            "maxOutputTokens": 8000
         }
     }
 
-    url = (
-        "https://generativelanguage.googleapis.com/"
-        "v1beta/models/"
-        f"{MODEL}:generateContent"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json"
+        },
+        method="POST"
     )
 
-    result = None
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = json.loads(response.read().decode("utf-8"))
 
-    for attempt in range(5):
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": api_key
-            },
-            method="POST"
-        )
-
-        try:
-            print(
-                f"Contacting Gemini "
-                f"(attempt {attempt + 1}/5)..."
-            )
-
-            with urllib.request.urlopen(
-                request,
-                timeout=120
-            ) as response:
-
-                result = json.loads(
-                    response.read().decode("utf-8")
-                )
-
-            print(
-                "Gemini responded successfully!"
-            )
-
-            break
-
-        except urllib.error.HTTPError as error:
-            details = error.read().decode(
-                "utf-8",
-                errors="replace"
-            )
-
-            if (
-                error.code in (429, 500, 502, 503, 504)
-                and attempt < 4
-            ):
-                wait_seconds = 15 * (2 ** attempt)
-
-                print(
-                    f"Gemini temporarily unavailable: "
-                    f"HTTP {error.code}"
-                )
-
-                print(
-                    f"Retrying in {wait_seconds} seconds..."
-                )
-
-                time.sleep(wait_seconds)
-                continue
-
-            raise RuntimeError(
-                f"Gemini API returned HTTP "
-                f"{error.code}: {details}"
-            )
-
-        except urllib.error.URLError as error:
-            if attempt < 4:
-                wait_seconds = 15 * (2 ** attempt)
-
-                print(
-                    "Gemini connection problem:",
-                    error
-                )
-
-                print(
-                    f"Retrying in {wait_seconds} seconds..."
-                )
-
-                time.sleep(wait_seconds)
-                continue
-
-            raise RuntimeError(
-                f"Gemini connection failed: {error}"
-            )
-
-    if result is None:
+    except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(
-            "Gemini failed after five attempts."
+            f"Gemini API error {error.code}: {details}"
         )
 
-    candidates = result.get(
-        "candidates",
-        []
-    )
+    except Exception as error:
+        raise RuntimeError(f"Gemini request failed: {error}")
 
-    if not candidates:
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+
+    except (KeyError, IndexError, TypeError):
         raise RuntimeError(
-            "Gemini returned no script candidates."
+            "Gemini returned an unexpected response: "
+            + json.dumps(data)[:2000]
         )
 
-    parts = candidates[0].get(
-        "content",
-        {}
-    ).get(
-        "parts",
-        []
-    )
 
-    scripts = "\n".join(
-        part["text"]
-        for part in parts
-        if "text" in part
-    )
-
-    if not scripts.strip():
-        raise RuntimeError(
-            "Gemini returned an empty script."
-        )
-
-    return scripts
-
-
-# ==========================================
-# EXTRACT NARRATION
-# ==========================================
-
-def extract_first_narration(scripts):
+def extract_narrations(full_text):
     pattern = re.compile(
-        r"\[\[NARRATION_START\]\]"
-        r"(.*?)"
+        r"\[\[NARRATION_START\]\](.*?)"
         r"\[\[NARRATION_END\]\]",
-        re.I | re.S
+        re.IGNORECASE | re.DOTALL
     )
 
-    matches = pattern.findall(scripts)
+    matches = pattern.findall(full_text)
 
-    if not matches:
-        raise RuntimeError(
-            "Gemini did not return narration markers. "
-            "The full AI response was saved for inspection."
-        )
+    return [
+        narration.strip()
+        for narration in matches
+        if narration.strip()
+    ]
 
-    narration = matches[0]
-
-    narration = re.sub(
-        r"\s+",
-        " ",
-        narration
-    ).strip()
-
-    if len(narration) < 80:
-        raise RuntimeError(
-            "The first narration is too short."
-        )
-
-    print(
-        "Narration extracted successfully."
-    )
-
-    print(
-        "Narration length:",
-        len(narration),
-        "characters"
-    )
-
-    return narration
-
-
-# ==========================================
-# SAVE ALL SCRIPTS AND VIDEO NARRATION
-# ==========================================
-
-def save_scripts(scripts):
-    OUT.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    # Preserve the complete Gemini response.
-    full_script_path = (
-        OUT / "all_shorts_scripts.txt"
-    )
-
-    full_script_path.write_text(
-        scripts,
-        encoding="utf-8"
-    )
-
-    print(
-        "All five scripts saved."
-    )
-
-    # Extract the first video's narration.
-    narration = extract_first_narration(
-        scripts
-    )
-
-    # Write a clean file in the exact format
-    # expected by video_creator.py.
-    narration_path = (
-        OUT / "shorts_scripts.txt"
-    )
-
-    narration_path.write_text(
-        "TRENDCLIP DAILY - VIDEO SCRIPT\n\n"
-        "Original Narration:\n"
-        f"{narration}\n",
-        encoding="utf-8"
-    )
-
-    print(
-        "Video narration saved successfully."
-    )
-
-    print(
-        "Location:",
-        narration_path
-    )
-
-
-# ==========================================
-# MAIN PROGRAM
-# ==========================================
 
 def main():
-    print("================================")
-    print("       TRENDCLIP DAILY")
-    print("       AI SCRIPT GENERATOR")
-    print("================================")
+    print("===================================")
+    print(" TRENDCLIP DAILY")
+    print(" STREAMER & TIKTOK CULTURE")
+    print("===================================")
 
-    print(
-        "Research time:",
-        datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d %H:%M UTC")
-    )
-
-    OUT.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    print("\nCollecting trending topics...")
+    print("\nCollecting creator trends...")
 
     trends = get_trends()
-
-    if not trends:
-        raise RuntimeError(
-            "No trending topics were collected. "
-            "Both trend feeds may be unavailable."
-        )
-
-    print(
-        "Topics collected:",
-        len(trends)
-    )
-
     save_trends(trends)
 
-    print("\nGenerating AI scripts...")
+    print(f"Collected {len(trends)} topics.")
 
-    scripts = create_ai_scripts(
-        trends
+    print("\nGenerating creator-style scripts...")
+
+    full_scripts = create_ai_scripts(trends)
+
+    # Save all five scripts for reference
+    with open(
+        OUTPUT_DIR / "all_shorts_scripts.txt",
+        "w",
+        encoding="utf-8"
+    ) as file:
+        file.write(full_scripts)
+
+    narrations = extract_narrations(full_scripts)
+
+    if not narrations:
+        raise RuntimeError(
+            "Gemini did not return narration using the required markers."
+        )
+
+    # Keep the first narration in the format expected
+    # by the existing video_creator.py
+    first_narration = narrations[0]
+
+    narration_file = (
+        "TRENDCLIP DAILY - CREATOR CULTURE SHORT\n\n"
+        "Original Narration:\n\n"
+        + first_narration
+        + "\n"
     )
 
-    print("\nSaving scripts...")
+    with open(
+        OUTPUT_DIR / "shorts_scripts.txt",
+        "w",
+        encoding="utf-8"
+    ) as file:
+        file.write(narration_file)
 
-    save_scripts(scripts)
+    # Save a quick list of the collected video ideas
+    with open(
+        OUTPUT_DIR / "video_ideas.txt",
+        "w",
+        encoding="utf-8"
+    ) as file:
+        for number, item in enumerate(trends, start=1):
+            file.write(
+                f"{number}. {item['title']}\n"
+                f"Source: {item['source']}\n"
+                f"Link: {item['url']}\n\n"
+            )
 
-    print("\n================================")
-    print("SUCCESS: AI SCRIPTS CREATED")
-    print("================================")
-
-    print(
-        "All scripts:",
-        OUT / "all_shorts_scripts.txt"
-    )
-
-    print(
-        "Video narration:",
-        OUT / "shorts_scripts.txt"
-    )
+    print("\nSUCCESS!")
+    print(f"Generated {len(narrations)} narration(s).")
+    print("First narration saved for video creation.")
+    print("All scripts saved in output/all_shorts_scripts.txt")
+    print("Ready for video_creator.py!")
 
 
 if __name__ == "__main__":
