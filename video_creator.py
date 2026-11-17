@@ -1,55 +1,161 @@
 
 import asyncio
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont
 
+# ==========================================
+# TRENDCLIP DAILY SETTINGS
+# ==========================================
+
 OUT = Path("output")
 W, H = 1080, 1920
 VOICE = "en-US-AriaNeural"
+VIDEO_NAME = "trendclip_first_short.mp4"
 
+FONT_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+]
+
+
+# ==========================================
+# FONT
+# ==========================================
 
 def font(size):
-    return ImageFont.truetype(
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        size
-    )
+    for font_path in FONT_PATHS:
+        if Path(font_path).exists():
+            return ImageFont.truetype(font_path, size)
 
+    return ImageFont.load_default()
+
+
+# ==========================================
+# NARRATION EXTRACTION
+# ==========================================
 
 def get_narration():
-    script = (OUT / "shorts_scripts.txt").read_text(
-        encoding="utf-8"
-    )
-
-    patterns = [
-        r"(?:original\s+)?narration\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested\s+visual|visual scenes|on-screen captions|description|fact-check)|\Z)",
-        r"(?:voiceover|voice-over|spoken script)\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested visual|visual scenes|on-screen captions|description|fact-check)|\Z)",
+    possible_files = [
+        OUT / "shorts_scripts.txt",
+        Path("shorts_scripts.txt"),
     ]
 
-    for pattern in patterns:
-        match = re.search(pattern, script, re.I | re.S)
-
-        if match:
-            narration = re.sub(
-                r"\s+", " ", match.group(1)
-            ).strip()
-
-            narration = re.sub(
-                r"^(?:\d+[.)]\s*)+",
-                "",
-                narration
-            )
-
-            if len(narration) >= 80:
-                return narration
-
-    raise RuntimeError(
-        "Could not find narration in shorts_scripts.txt"
+    script_path = next(
+        (path for path in possible_files if path.exists()),
+        None
     )
 
+    if script_path is None:
+        raise FileNotFoundError(
+            "Could not find shorts_scripts.txt. "
+            "Check that Main.py creates the file before "
+            "video_creator.py runs."
+        )
+
+    script = script_path.read_text(
+        encoding="utf-8"
+    ).strip()
+
+    if not script:
+        raise RuntimeError(
+            "shorts_scripts.txt is empty."
+        )
+
+    start_pattern = re.compile(
+        r"^\s*(?:#{1,6}\s*)?(?:\*\*)?"
+        r"(?:\d+[.)]\s*)?"
+        r"(?:original\s+)?"
+        r"(?:narration|voice[- ]?over|voiceover|spoken script)"
+        r"(?:\*\*)?\s*[:\-–—]?\s*(.*)$",
+        re.I
+    )
+
+    stop_pattern = re.compile(
+        r"^\s*(?:#{1,6}\s*)?(?:\*\*)?"
+        r"(?:\d+[.)]\s*)?"
+        r"(?:three suggested visual scenes|"
+        r"suggested visual scenes|"
+        r"three visual scenes|visual scenes|"
+        r"short on-screen captions|"
+        r"on-screen captions|"
+        r"suggested visuals|"
+        r"visual suggestions|"
+        r"captions|"
+        r"description|"
+        r"fact-check|"
+        r"hashtags|"
+        r"tags)"
+        r"(?:\*\*)?\s*[:\-–—]?\s*$",
+        re.I
+    )
+
+    lines = script.splitlines()
+    start_index = None
+    first_line = ""
+
+    for index, line in enumerate(lines):
+        match = start_pattern.match(line)
+
+        if match:
+            start_index = index
+            first_line = match.group(1).strip()
+            break
+
+    if start_index is None:
+        raise RuntimeError(
+            "Could not find a narration heading in "
+            "shorts_scripts.txt. Expected a heading such as "
+            "'Original Narration' or 'Voiceover'."
+        )
+
+    narration_lines = []
+
+    if first_line:
+        narration_lines.append(first_line)
+
+    for line in lines[start_index + 1:]:
+        if stop_pattern.match(line):
+            break
+
+        narration_lines.append(line)
+
+    narration = " ".join(narration_lines)
+
+    narration = re.sub(
+        r"\s+",
+        " ",
+        narration
+    ).strip()
+
+    narration = re.sub(
+        r"\*\*|__|`",
+        "",
+        narration
+    )
+
+    narration = re.sub(
+        r"^(?:\d+[.)]\s*)+",
+        "",
+        narration
+    )
+
+    if len(narration) < 80:
+        raise RuntimeError(
+            "Narration was found, but it contains fewer "
+            "than 80 characters. Check shorts_scripts.txt."
+        )
+
+    return narration
+
+
+# ==========================================
+# CAPTION SPLITTING
+# ==========================================
 
 def split_captions(text, max_words=5):
     words = text.split()
@@ -69,6 +175,10 @@ def split_captions(text, max_words=5):
     return groups
 
 
+# ==========================================
+# CAPTION TIMING
+# ==========================================
+
 def syllable_weight(text):
     words = re.findall(r"[A-Za-z']+", text)
     total = 0
@@ -86,23 +196,67 @@ def syllable_weight(text):
     return max(total, 1)
 
 
+# ==========================================
+# TEXT WRAPPING
+# ==========================================
+
+def wrap_text(draw, text, selected_font, max_width):
+    words = text.split()
+    lines = []
+    current = ""
+
+    for word in words:
+        test = (current + " " + word).strip()
+
+        bounds = draw.textbbox(
+            (0, 0),
+            test,
+            font=selected_font
+        )
+
+        width = bounds[2] - bounds[0]
+
+        if width > max_width and current:
+            lines.append(current)
+            current = word
+        else:
+            current = test
+
+    if current:
+        lines.append(current)
+
+    return lines
+
+
+# ==========================================
+# VIDEO FRAME DESIGN
+# ==========================================
+
 def make_frame(caption, number, total, path):
+    # Create a smooth vertical gradient.
     image = Image.new("RGB", (W, H))
-    pixels = image.load()
+    draw = ImageDraw.Draw(image)
+
+    top_color = (8, 13, 31)
+    bottom_color = (18, 26, 62)
 
     for y in range(H):
         t = y / H
-        color = (
-            int(8 + 10 * t),
-            int(13 + 13 * t),
-            int(31 + 31 * t)
+
+        color = tuple(
+            int(
+                top_color[channel]
+                + (bottom_color[channel] - top_color[channel]) * t
+            )
+            for channel in range(3)
         )
 
-        for x in range(W):
-            pixels[x, y] = color
+        draw.line(
+            (0, y, W, y),
+            fill=color
+        )
 
-    draw = ImageDraw.Draw(image)
-
+    # Background grid.
     for x in range(0, W, 90):
         draw.line(
             (x, 0, x, H),
@@ -117,6 +271,7 @@ def make_frame(caption, number, total, path):
             width=1
         )
 
+    # Brand header.
     draw.rounded_rectangle(
         (66, 92, 1014, 198),
         radius=34,
@@ -139,6 +294,7 @@ def make_frame(caption, number, total, path):
         fill=(75, 220, 255)
     )
 
+    # Section heading.
     draw.text(
         (82, 300),
         "THE INTERNET IS TALKING",
@@ -146,6 +302,7 @@ def make_frame(caption, number, total, path):
         fill=(105, 205, 235)
     )
 
+    # Main caption card.
     draw.rounded_rectangle(
         (58, 560, 1022, 1350),
         radius=48,
@@ -154,37 +311,39 @@ def make_frame(caption, number, total, path):
         width=4
     )
 
-    words = caption.split()
-    lines = []
-    current = ""
+    selected_font = font(76)
 
-    for word in words:
-        test = (current + " " + word).strip()
+    lines = wrap_text(
+        draw,
+        caption,
+        selected_font,
+        830
+    )
 
-        if len(test) > 19 and current:
-            lines.append(current)
-            current = word
-        else:
-            current = test
+    # Reduce font size if needed.
+    if len(lines) > 4:
+        selected_font = font(60)
 
-    if current:
-        lines.append(current)
-
-    line_height = 112
-    y = 560 + (790 - len(lines) * line_height) // 2
-
-    for line in lines:
-        selected_font = font(
-            76 if len(line) < 17 else 66
+        lines = wrap_text(
+            draw,
+            caption,
+            selected_font,
+            850
         )
 
+    line_height = 112
+    total_height = len(lines) * line_height
+    y = 560 + (790 - total_height) // 2
+
+    for line in lines:
         bounds = draw.textbbox(
             (0, 0),
             line,
             font=selected_font
         )
 
-        x = (W - (bounds[2] - bounds[0])) // 2
+        text_width = bounds[2] - bounds[0]
+        x = (W - text_width) // 2
 
         draw.text(
             (x, y),
@@ -197,6 +356,7 @@ def make_frame(caption, number, total, path):
 
         y += line_height
 
+    # Footer.
     draw.text(
         (82, 1465),
         "TREND ALERT",
@@ -211,7 +371,9 @@ def make_frame(caption, number, total, path):
         fill=(205, 222, 245)
     )
 
-    left, right, top, bottom = 82, 998, 1800, 1818
+    # Progress bar.
+    left, right = 82, 998
+    top, bottom = 1800, 1818
 
     draw.rounded_rectangle(
         (left, top, right, bottom),
@@ -229,8 +391,15 @@ def make_frame(caption, number, total, path):
         fill=(75, 220, 255)
     )
 
-    image.save(path)
+    image.save(
+        path,
+        optimize=True
+    )
 
+
+# ==========================================
+# AI VOICE GENERATION
+# ==========================================
 
 async def create_voice(text, audio_path):
     communicate = edge_tts.Communicate(
@@ -239,8 +408,14 @@ async def create_voice(text, audio_path):
         rate="-5%"
     )
 
-    await communicate.save(str(audio_path))
+    await communicate.save(
+        str(audio_path)
+    )
 
+
+# ==========================================
+# AUDIO DURATION
+# ==========================================
 
 def get_audio_duration(audio_path):
     result = subprocess.run(
@@ -256,46 +431,121 @@ def get_audio_duration(audio_path):
         check=True
     )
 
-    return float(result.stdout.strip())
+    duration = float(
+        result.stdout.strip()
+    )
 
+    return duration
+
+
+# ==========================================
+# CHECK REQUIRED PROGRAMS
+# ==========================================
+
+def check_requirements():
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError(
+            "FFmpeg is not installed or is not available."
+        )
+
+    if shutil.which("ffprobe") is None:
+        raise RuntimeError(
+            "FFprobe is not installed or is not available."
+        )
+
+
+# ==========================================
+# CREATE VIDEO
+# ==========================================
 
 def main():
-    OUT.mkdir(exist_ok=True)
+    print("================================")
+    print("     TRENDCLIP DAILY")
+    print("     VIDEO GENERATOR")
+    print("================================")
+
+    OUT.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    check_requirements()
+
+    # Find narration.
+    print("Reading narration...")
 
     narration = get_narration()
 
     print("Narration found successfully.")
-    print("Creating English voiceover...")
+    print("Narration characters:", len(narration))
+
+    # Generate voiceover.
+    print("Creating English AI voiceover...")
 
     audio = OUT / "voiceover.mp3"
 
     asyncio.run(
-        create_voice(narration, audio)
+        create_voice(
+            narration,
+            audio
+        )
     )
 
     if not audio.exists() or audio.stat().st_size == 0:
-        raise RuntimeError("Voiceover audio was not created.")
+        raise RuntimeError(
+            "Voiceover audio was not created."
+        )
 
     print("Voiceover saved successfully.")
 
-    audio_duration = get_audio_duration(audio)
+    # Measure audio.
+    audio_duration = get_audio_duration(
+        audio
+    )
 
     if audio_duration <= 0:
-        raise RuntimeError("Audio duration could not be measured.")
+        raise RuntimeError(
+            "Audio duration could not be measured."
+        )
 
-    groups = split_captions(narration)
+    print(
+        f"Voiceover duration: {audio_duration:.2f} seconds"
+    )
+
+    # Create caption groups.
+    groups = split_captions(
+        narration
+    )
 
     if not groups:
-        raise RuntimeError("No caption groups were created.")
+        raise RuntimeError(
+            "No caption groups were created."
+        )
 
-    weights = [syllable_weight(group) for group in groups]
+    weights = [
+        syllable_weight(group)
+        for group in groups
+    ]
+
     total_weight = sum(weights)
 
+    # Create frames.
     frames = OUT / "video_frames"
 
-    frames.mkdir(exist_ok=True)
+    frames.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # Remove old frames to avoid stale files.
+    for old_frame in frames.glob("frame_*.png"):
+        old_frame.unlink()
 
     paths = []
+
+    print(
+        f"Creating {len(groups)} caption frames..."
+    )
 
     for index, caption in enumerate(groups):
         frame_path = frames / f"frame_{index:03}.png"
@@ -307,11 +557,23 @@ def main():
             frame_path
         )
 
-        paths.append(frame_path)
+        paths.append(
+            frame_path
+        )
 
+    if not paths:
+        raise RuntimeError(
+            "No video frames were created."
+        )
+
+    # Create FFmpeg concat file.
     concat = OUT / "frames.txt"
 
-    with concat.open("w", encoding="utf-8") as file:
+    with concat.open(
+        "w",
+        encoding="utf-8"
+    ) as file:
+
         for index, path in enumerate(paths):
             duration = (
                 audio_duration
@@ -327,11 +589,13 @@ def main():
                 f"duration {duration:.4f}\n"
             )
 
+        # Repeat final frame for concat timing.
         file.write(
             f"file '{paths[-1].resolve()}'\n"
         )
 
-    video = OUT / "trendclip_first_short.mp4"
+    # Render final video.
+    video = OUT / VIDEO_NAME
 
     print("Rendering TrendClip Daily video...")
 
@@ -348,6 +612,7 @@ def main():
             "-vf", "fps=30,format=yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
+            "-crf", "23",
             "-c:a", "aac",
             "-b:a", "128k",
             "-t", str(audio_duration),
@@ -358,12 +623,28 @@ def main():
         check=True
     )
 
+    # Verify video.
     if not video.exists() or video.stat().st_size == 0:
-        raise RuntimeError("The final video was not created.")
+        raise RuntimeError(
+            "The final video was not created."
+        )
 
-    print("SUCCESS: TrendClip Daily video created!")
-    print(video)
+    print("")
+    print("================================")
+    print("SUCCESS!")
+    print("TRENDCLIP DAILY VIDEO CREATED!")
+    print("================================")
+    print("Video:", video)
+    print(
+        "File size:",
+        round(video.stat().st_size / (1024 * 1024), 2),
+        "MB"
+    )
 
+
+# ==========================================
+# RUN PROGRAM
+# ==========================================
 
 if __name__ == "__main__":
     main()
