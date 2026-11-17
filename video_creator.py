@@ -22,18 +22,17 @@ VOICE = "en-US-AriaNeural"
 VOICE_RATE = "+8%"
 VIDEO_NAME = "trendclip_first_short.mp4"
 
-# Two words per caption keeps the video moving.
 CAPTION_WORDS = 2
 
 WHITE = (255, 255, 255)
 YELLOW = (255, 220, 35)
 CYAN = (50, 220, 255)
-DARK = (5, 8, 20)
 
 FONT_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
 ]
+
 
 # ==========================================
 # FONT HELPERS
@@ -48,12 +47,7 @@ def font(size):
 
 
 def text_width(draw, text, selected_font):
-    box = draw.textbbox(
-        (0, 0),
-        text,
-        font=selected_font,
-        stroke_width=0
-    )
+    box = draw.textbbox((0, 0), text, font=selected_font)
     return box[2] - box[0]
 
 
@@ -96,7 +90,9 @@ def get_narration():
     ).strip()
 
     if not script:
-        raise RuntimeError("The script file is empty.")
+        raise RuntimeError(
+            "The script file is empty."
+        )
 
     start_pattern = re.compile(
         r"^\s*(?:#{1,6}\s*)?(?:\*\*)?"
@@ -122,6 +118,7 @@ def get_narration():
     )
 
     lines = script.splitlines()
+
     start_index = None
     first_line = ""
 
@@ -133,31 +130,36 @@ def get_narration():
             first_line = match.group(1).strip()
             break
 
-    if start_index is None:
-        raise RuntimeError(
-            "Could not find a Narration or Voiceover heading."
-        )
-
     narration_lines = []
 
-    if first_line:
-        narration_lines.append(first_line)
+    if start_index is not None:
+        # A narration heading was found.
+        if first_line:
+            narration_lines.append(first_line)
 
-    for line in lines[start_index + 1:]:
-        if stop_pattern.match(line):
-            break
+        for line in lines[start_index + 1:]:
+            if stop_pattern.match(line):
+                break
 
-        narration_lines.append(line)
+            narration_lines.append(line)
+
+    else:
+        # IMPORTANT FIX:
+        # Main.py may save plain narration without a heading.
+        # In that case, use the entire script as narration.
+        narration_lines = lines
 
     narration = " ".join(narration_lines)
+
+    # Remove Markdown formatting and common list markers.
+    narration = re.sub(r"\*\*|__|`|~~", "", narration)
+    narration = re.sub(r"^\s*[-*•]\s+", "", narration, flags=re.M)
     narration = re.sub(r"\s+", " ", narration)
-    narration = re.sub(r"\*\*|__|`", "", narration)
-    narration = re.sub(r"^(?:\d+[.)]\s*)+", "", narration)
     narration = narration.strip()
 
     if len(narration) < 80:
         raise RuntimeError(
-            "Narration is too short or could not be extracted."
+            "Narration is too short. Check shorts_scripts.txt."
         )
 
     return narration
@@ -169,12 +171,11 @@ def get_narration():
 
 def split_captions(text, max_words=CAPTION_WORDS):
     words = text.split()
-    groups = []
 
-    for index in range(0, len(words), max_words):
-        groups.append(words[index:index + max_words])
-
-    return groups
+    return [
+        words[index:index + max_words]
+        for index in range(0, len(words), max_words)
+    ]
 
 
 def syllable_weight(text):
@@ -205,7 +206,6 @@ def create_background(number):
     top_color = (4, 8, 24)
     bottom_color = (20, 15, 58)
 
-    # Smooth vertical gradient.
     for y in range(H):
         t = y / H
 
@@ -217,12 +217,9 @@ def create_background(number):
             for channel in range(3)
         )
 
-        draw.line(
-            (0, y, W, y),
-            fill=color
-        )
+        draw.line((0, y, W, y), fill=color)
 
-    # Moving decorative rings.
+    # Decorative rings.
     for i in range(8):
         x = (i * 193 + number * 83) % W
         y = (i * 271 + number * 47) % H
@@ -239,7 +236,7 @@ def create_background(number):
             width=4
         )
 
-    # Diagonal background streaks.
+    # Diagonal streaks.
     offset = (number * 35) % 180
 
     for x in range(-H, W, 180):
@@ -254,7 +251,6 @@ def create_background(number):
             width=3
         )
 
-    # Accent glow panel.
     draw.ellipse(
         (250, 480, 830, 1060),
         outline=(18, 42, 90),
@@ -307,7 +303,7 @@ def make_frame(words, number, total, path):
     image = create_background(number)
     draw = ImageDraw.Draw(image)
 
-    # Main top branding.
+    # Top branding.
     draw.rounded_rectangle(
         (55, 85, 1025, 215),
         radius=38,
@@ -349,29 +345,22 @@ def make_frame(words, number, total, path):
         fill=WHITE
     )
 
-    # Attention-grabbing hook label.
+    # Hook label.
     hook_text = (
         "WAIT FOR IT"
         if number == 0
         else "YOU NEED TO SEE THIS"
     )
 
-    hook_font = fit_font(
-        draw,
-        hook_text,
-        36,
-        850
-    )
-
     draw_centered_text(
         draw,
         hook_text,
         355,
-        hook_font,
+        fit_font(draw, hook_text, 36, 850),
         CYAN
     )
 
-    # Main caption panel.
+    # Caption panel.
     draw.rounded_rectangle(
         (55, 570, 1025, 1325),
         radius=55,
@@ -380,7 +369,6 @@ def make_frame(words, number, total, path):
         width=5
     )
 
-    # Small caption heading.
     draw_centered_text(
         draw,
         "THE STORY CONTINUES...",
@@ -389,7 +377,6 @@ def make_frame(words, number, total, path):
         (150, 190, 230)
     )
 
-    # Main caption: highlight the final word.
     caption_words = [word.upper() for word in words]
 
     if not caption_words:
@@ -398,19 +385,8 @@ def make_frame(words, number, total, path):
     first_part = " ".join(caption_words[:-1])
     highlighted_word = caption_words[-1]
 
-    first_font = fit_font(
-        draw,
-        first_part,
-        104,
-        850
-    )
-
-    highlight_font = fit_font(
-        draw,
-        highlighted_word,
-        112,
-        850
-    )
+    first_font = fit_font(draw, first_part, 104, 850)
+    highlight_font = fit_font(draw, highlighted_word, 112, 850)
 
     first_width = (
         text_width(draw, first_part, first_font)
@@ -427,10 +403,9 @@ def make_frame(words, number, total, path):
     total_width = first_width + gap + highlight_width
     start_x = (W - total_width) // 2
 
-    # First caption word(s).
     if first_part:
         draw.text(
-            (start_x + 5, 895 + 8),
+            (start_x + 5, 903),
             first_part,
             font=first_font,
             fill=(0, 0, 0),
@@ -447,7 +422,6 @@ def make_frame(words, number, total, path):
             stroke_fill=(0, 0, 0)
         )
 
-    # Highlight background.
     highlight_x = start_x + first_width + gap
 
     draw.rounded_rectangle(
@@ -463,7 +437,6 @@ def make_frame(words, number, total, path):
         width=3
     )
 
-    # Highlighted word.
     draw.text(
         (highlight_x, 1060),
         highlighted_word,
@@ -473,7 +446,7 @@ def make_frame(words, number, total, path):
         stroke_fill=(0, 0, 0)
     )
 
-    # Bottom callout.
+    # Bottom callouts.
     draw_centered_text(
         draw,
         "DON'T SCROLL!",
@@ -490,7 +463,6 @@ def make_frame(words, number, total, path):
         WHITE
     )
 
-    # Stronger closing message on final scene.
     if number == total - 1:
         draw.rounded_rectangle(
             (180, 1610, 900, 1700),
@@ -508,7 +480,7 @@ def make_frame(words, number, total, path):
             CYAN
         )
 
-    # Video progress bar.
+    # Progress bar.
     left = 75
     right = 1005
     bar_top = 1790
@@ -525,17 +497,11 @@ def make_frame(words, number, total, path):
     )
 
     draw.rounded_rectangle(
-        (
-            left,
-            bar_top,
-            left + progress,
-            bar_bottom
-        ),
+        (left, bar_top, left + progress, bar_bottom),
         radius=13,
         fill=YELLOW
     )
 
-    # Scene counter.
     draw.text(
         (850, 1725),
         f"{number + 1}/{total}",
@@ -616,30 +582,21 @@ def render_video(concat_file, audio, video, duration):
     command = [
         "ffmpeg",
         "-y",
-
         "-f", "concat",
         "-safe", "0",
         "-i", str(concat_file),
-
         "-i", str(audio),
-
         "-map", "0:v:0",
         "-map", "1:a:0",
-
         "-vf", video_filter,
-
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "21",
-
         "-c:a", "aac",
         "-b:a", "160k",
-
         "-t", str(duration),
         "-shortest",
-
         "-movflags", "+faststart",
-
         str(video)
     ]
 
@@ -675,21 +632,15 @@ def main():
 
     audio = OUT / "voiceover.mp3"
 
-    asyncio.run(
-        create_voice(narration, audio)
-    )
+    asyncio.run(create_voice(narration, audio))
 
     if not audio.exists() or audio.stat().st_size == 0:
-        raise RuntimeError(
-            "Voiceover generation failed."
-        )
+        raise RuntimeError("Voiceover generation failed.")
 
     duration = get_audio_duration(audio)
 
     if duration <= 0:
-        raise RuntimeError(
-            "Invalid audio duration."
-        )
+        raise RuntimeError("Invalid audio duration.")
 
     print(f"Audio duration: {duration:.2f} seconds")
 
@@ -699,9 +650,7 @@ def main():
     groups = split_captions(narration)
 
     if not groups:
-        raise RuntimeError(
-            "No captions were created."
-        )
+        raise RuntimeError("No captions were created.")
 
     weights = [
         syllable_weight(" ".join(group))
@@ -735,20 +684,14 @@ def main():
         )
 
     if not paths:
-        raise RuntimeError(
-            "No video frames were generated."
-        )
+        raise RuntimeError("No video frames were generated.")
 
     # Step 5: Build video timeline.
     print("\n[5/6] Preparing video timeline...")
 
     concat_file = OUT / "frames.txt"
 
-    with concat_file.open(
-        "w",
-        encoding="utf-8"
-    ) as file:
-
+    with concat_file.open("w", encoding="utf-8") as file:
         for index, frame_path in enumerate(paths):
             segment_duration = (
                 duration * weights[index] / total_weight
@@ -779,9 +722,7 @@ def main():
     )
 
     if not video.exists() or video.stat().st_size == 0:
-        raise RuntimeError(
-            "The final video was not created."
-        )
+        raise RuntimeError("The final video was not created.")
 
     size_mb = video.stat().st_size / (1024 * 1024)
 
