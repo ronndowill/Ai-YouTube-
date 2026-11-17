@@ -23,4 +23,4 @@ jobs:
           python-version: "3.11"
 
       - name: Run TrendClip AI
-        run: python main.py
+        run: python Main.py
