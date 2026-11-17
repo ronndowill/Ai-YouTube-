@@ -26,44 +26,38 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 TrendClipDaily/1.0"
 }
 
+MAX_GEMINI_ATTEMPTS = 4
+RETRY_DELAYS = [8, 16, 32]
+
 
 # ==================================================
 # CREATOR TOPIC SEARCHES
 # ==================================================
 
 SEARCHES = [
-    (
-        "Streamer Culture",
-        '"Kai Cenat" OR "IShowSpeed" OR "Adin Ross" livestream'
-    ),
-    (
-        "TikTok Creators",
-        "TikTok viral creator trends"
-    ),
-    (
-        "Twitch Streamers",
-        "Twitch streamer viral moments"
-    ),
-    (
-        "Creator Drama",
-        "influencer creator controversy"
-    ),
-    (
-        "Internet Trends",
-        "viral internet moments social media"
-    ),
-    (
-        "YouTube Creators",
-        "popular YouTube creators viral videos"
-    ),
-    (
-        "Gaming Creators",
-        "gaming streamer viral clips"
-    ),
-    (
-        "Creator Reactions",
-        "streamer reaction viral video"
-    ),
+    ("Streamer Culture",
+     '"Kai Cenat" OR "IShowSpeed" OR "Adin Ross" livestream'),
+
+    ("TikTok Creators",
+     "TikTok viral creator trends"),
+
+    ("Twitch Streamers",
+     "Twitch streamer viral moments"),
+
+    ("Creator Drama",
+     "influencer creator controversy"),
+
+    ("Internet Trends",
+     "viral internet moments social media"),
+
+    ("YouTube Creators",
+     "popular YouTube creators viral videos"),
+
+    ("Gaming Creators",
+     "gaming streamer viral clips"),
+
+    ("Creator Reactions",
+     "streamer reaction viral video"),
 ]
 
 
@@ -108,16 +102,13 @@ def get_trends():
             print(f"\nChecking {source}...")
 
             raw = fetch_url(url)
-
             root = ET.fromstring(raw)
 
             count = 0
 
             for item in root.iter():
 
-                tag = item.tag.split("}")[-1]
-
-                if tag != "item":
+                if item.tag.split("}")[-1] != "item":
                     continue
 
                 title = ""
@@ -126,25 +117,21 @@ def get_trends():
 
                 for child in item:
 
-                    child_tag = child.tag.split("}")[-1]
+                    tag = child.tag.split("}")[-1]
 
-                    if child_tag == "title":
+                    if tag == "title":
                         title = (child.text or "").strip()
 
-                    elif child_tag == "link":
+                    elif tag == "link":
                         link = (child.text or "").strip()
 
-                    elif child_tag == "pubDate":
+                    elif tag == "pubDate":
                         published = (child.text or "").strip()
 
                 if not title:
                     continue
 
-                title = re.sub(
-                    r"\s+",
-                    " ",
-                    title
-                ).strip()
+                title = re.sub(r"\s+", " ", title).strip()
 
                 key = title.lower()
 
@@ -166,9 +153,7 @@ def get_trends():
 
         except Exception as error:
 
-            print(
-                f"Could not collect {source}: {error}"
-            )
+            print(f"Could not collect {source}: {error}")
 
         time.sleep(1)
 
@@ -229,10 +214,7 @@ def save_video_ideas(trends):
         encoding="utf-8"
     ) as file:
 
-        for number, item in enumerate(
-            trends,
-            start=1
-        ):
+        for number, item in enumerate(trends, start=1):
 
             file.write(
                 f"{number}. {item['title']}\n"
@@ -245,7 +227,87 @@ def save_video_ideas(trends):
 
 
 # ==================================================
-# GENERATE FIVE CREATOR-STYLE SCRIPTS
+# BACKUP SCRIPT GENERATOR
+# Works without Gemini or another paid API
+# ==================================================
+
+def create_backup_scripts(trends):
+
+    print("\nUsing local backup script generator...")
+
+    scripts = []
+
+    selected = trends[:5]
+
+    if not selected:
+        raise RuntimeError("No topics available for backup scripts.")
+
+    for number, item in enumerate(selected, start=1):
+
+        title = item["title"]
+        category = item["source"]
+        source_url = item["url"]
+
+        narration = (
+            f"Here's a creator story getting attention right now. "
+            f"The topic is: {title}. "
+            f"And this is exactly the kind of internet conversation "
+            f"that gets people talking. "
+            f"But before jumping to conclusions, it's important to "
+            f"separate what's actually reported from what people are "
+            f"saying online. "
+            f"The headline gives us the subject, but the full story "
+            f"deserves a closer look. "
+            f"So what do you think about this one? "
+            f"Is this something worth paying attention to, "
+            f"or will the internet move on to the next big story? "
+            f"Let us know what you think in the comments, "
+            f"and follow TrendClip Daily for more creator culture."
+        )
+
+        script = f"""
+### VIDEO {number}
+
+Title: {title}
+
+Hook: The internet has another creator story to talk about!
+
+[[NARRATION_START]]
+{narration}
+[[NARRATION_END]]
+
+Suggested Visual Scenes:
+1. Fast opening text introducing the topic.
+2. Creator-related background footage or licensed visuals.
+3. Headline-style topic display.
+4. Animated question and comment prompt.
+
+On-Screen Captions:
+1. THE INTERNET IS TALKING
+2. CREATOR CULTURE
+3. WHAT DO YOU THINK?
+4. FOLLOW FOR MORE
+
+Description:
+A creator culture topic worth discussing. Check the original source for full context.
+
+Hashtags:
+#TrendClipDaily #Streamer #TikTok #CreatorNews #YouTubeShorts
+
+Source:
+{source_url}
+
+Fact Check Note:
+Backup script based on the supplied headline only. Verify the original source before publishing.
+"""
+
+        scripts.append(script.strip())
+
+    return "\n\n".join(scripts)
+
+
+# ==================================================
+# GEMINI SCRIPT GENERATOR
 # ==================================================
 
 def create_ai_scripts(trends):
@@ -254,10 +316,8 @@ def create_ai_scripts(trends):
 
     if not api_key:
 
-        raise RuntimeError(
-            "GEMINI_API_KEY is missing. "
-            "Check your GitHub repository Secrets."
-        )
+        print("Gemini API key missing. Using backup scripts.")
+        return create_backup_scripts(trends)
 
     topics = "\n\n".join(
         [
@@ -273,75 +333,37 @@ def create_ai_scripts(trends):
 You are the head entertainment content creator
 for TRENDCLIP DAILY.
 
-IMPORTANT:
-We are NOT a traditional news channel.
-
 We are an entertaining internet culture channel
 focused on streamers, TikTok creators and viral moments.
-
-OUR CONTENT CATEGORIES:
-
-1. Popular streamers.
-2. TikTok stars and creators.
-3. Twitch livestream moments.
-4. Funny internet moments.
-5. Creator reactions.
-6. Public creator disagreements and drama.
-7. Viral challenges.
-8. Gaming creators.
-9. YouTube personalities.
-10. Unexpected internet moments.
 
 CURRENT TOPIC RESEARCH:
 
 {topics}
 
-YOUR ASSIGNMENT:
-
-Create FIVE different YouTube Shorts scripts
-using the most interesting available topics.
+Create FIVE different YouTube Shorts scripts.
 
 STYLE:
-
-Write like an entertaining social media commentator.
-
-The narration should sound like someone talking
-directly to their audience.
-
-Use:
-- Energetic storytelling.
-- Natural conversational language.
+- Energetic social media commentator.
 - Strong opening hooks.
+- Natural conversational language.
 - Short, punchy sentences.
-- Interesting details.
 - Fast-paced storytelling.
-- Memorable endings.
+- Interesting endings.
+- Aim for 30 to 45 seconds of narration.
 
 DO NOT:
 - Sound like a television news reporter.
-- Start with "Good morning" or "Breaking news."
-- Use boring introductions.
-- Invent quotes or events.
+- Invent quotes, events or statistics.
 - Make unsupported accusations.
 - Present rumors as confirmed facts.
-- Pretend you watched a livestream or video.
-- Invent view counts or engagement numbers.
-- Repeat the same story in multiple videos.
+- Pretend you watched a video or livestream.
+- Repeat the same story.
 
 ACCURACY:
-
-Use only information supported by the supplied
-source material.
-
-If a topic does not have enough information,
-choose another topic.
-
+Use only details supported by the supplied sources.
+If a headline does not provide enough detail,
+do not invent the missing information.
 Clearly distinguish allegations from confirmed facts.
-
-VIDEO LENGTH:
-
-Aim for approximately 30 to 45 seconds
-of spoken narration per video.
 
 REQUIRED OUTPUT FORMAT:
 
@@ -352,7 +374,7 @@ Title:
 Hook:
 
 [[NARRATION_START]]
-Write the complete spoken narration here.
+Complete spoken narration here.
 [[NARRATION_END]]
 
 Suggested Visual Scenes:
@@ -373,25 +395,11 @@ Source:
 
 Fact Check Note:
 
+Repeat this exact format for VIDEO 2 through VIDEO 5.
 
-Repeat this exact format for:
-
-VIDEO 2
-VIDEO 3
-VIDEO 4
-VIDEO 5
-
-FINAL INSTRUCTIONS:
-
-- Generate five different videos.
-- Make VIDEO 1 the strongest.
-- Prioritize streamer and TikTok culture.
-- Keep the scripts entertaining and conversational.
-- Put ONLY spoken words inside narration markers.
-- Keep visual suggestions outside narration markers.
-- Make narration ready for text-to-speech.
-- Include the source link when available.
-- Return plain text, not JSON.
+Make VIDEO 1 the strongest.
+Return plain text, not JSON.
+Put only spoken words inside narration markers.
 """
 
     api_url = (
@@ -403,7 +411,6 @@ FINAL INSTRUCTIONS:
     )
 
     payload = {
-
         "contents": [
             {
                 "parts": [
@@ -413,7 +420,6 @@ FINAL INSTRUCTIONS:
                 ]
             }
         ],
-
         "generationConfig": {
             "temperature": 0.85,
             "maxOutputTokens": 8000
@@ -429,60 +435,103 @@ FINAL INSTRUCTIONS:
         method="POST"
     )
 
-    try:
+    for attempt in range(1, MAX_GEMINI_ATTEMPTS + 1):
 
-        print("\nSending topics to Gemini...")
+        try:
 
-        with urllib.request.urlopen(
-            request,
-            timeout=180
-        ) as response:
-
-            data = json.loads(
-                response.read().decode("utf-8")
+            print(
+                f"\nSending topics to Gemini "
+                f"(attempt {attempt}/{MAX_GEMINI_ATTEMPTS})..."
             )
 
-    except urllib.error.HTTPError as error:
+            with urllib.request.urlopen(
+                request,
+                timeout=180
+            ) as response:
 
-        details = error.read().decode(
-            "utf-8",
-            errors="replace"
-        )
+                data = json.loads(
+                    response.read().decode("utf-8")
+                )
 
-        raise RuntimeError(
-            f"Gemini API error {error.code}: {details}"
-        )
+            parts = data["candidates"][0]["content"]["parts"]
 
-    except Exception as error:
-
-        raise RuntimeError(
-            f"Gemini request failed: {error}"
-        )
-
-    try:
-
-        parts = data["candidates"][0]["content"]["parts"]
-
-        generated_text = "\n".join(
-            part.get("text", "")
-            for part in parts
-            if part.get("text")
-        )
-
-        if not generated_text.strip():
-
-            raise RuntimeError(
-                "Gemini returned empty script content."
+            generated_text = "\n".join(
+                part.get("text", "")
+                for part in parts
+                if part.get("text")
             )
 
-        return generated_text
+            if not generated_text.strip():
 
-    except (KeyError, IndexError, TypeError):
+                raise RuntimeError(
+                    "Gemini returned empty script content."
+                )
 
-        raise RuntimeError(
-            "Unexpected Gemini response: "
-            + json.dumps(data)[:3000]
-        )
+            print("Gemini successfully generated scripts.")
+
+            return generated_text
+
+        except urllib.error.HTTPError as error:
+
+            details = error.read().decode(
+                "utf-8",
+                errors="replace"
+            )
+
+            retryable = error.code in (
+                429, 500, 502, 503, 504
+            )
+
+            print(
+                f"Gemini HTTP error {error.code}: "
+                f"{details[:500]}"
+            )
+
+            if retryable and attempt < MAX_GEMINI_ATTEMPTS:
+
+                delay = RETRY_DELAYS[attempt - 1]
+
+                print(
+                    f"Gemini is temporarily unavailable. "
+                    f"Retrying in {delay} seconds..."
+                )
+
+                time.sleep(delay)
+                continue
+
+            print("Gemini did not recover.")
+
+            break
+
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError
+        ) as error:
+
+            print(f"Gemini connection problem: {error}")
+
+            if attempt < MAX_GEMINI_ATTEMPTS:
+
+                delay = RETRY_DELAYS[attempt - 1]
+
+                print(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+                continue
+
+            break
+
+        except Exception as error:
+
+            print(f"Gemini response problem: {error}")
+            break
+
+    print(
+        "\nWARNING: Gemini could not generate scripts. "
+        "Switching to local backup mode."
+    )
+
+    return create_backup_scripts(trends)
 
 
 # ==================================================
@@ -500,17 +549,11 @@ def extract_narrations(full_text):
 
     matches = pattern.findall(full_text)
 
-    narrations = []
-
-    for match in matches:
-
-        narration = match.strip()
-
-        if narration:
-
-            narrations.append(narration)
-
-    return narrations
+    return [
+        match.strip()
+        for match in matches
+        if match.strip()
+    ]
 
 
 # ==================================================
@@ -541,7 +584,7 @@ def save_first_narration(narrations):
     if not narrations:
 
         raise RuntimeError(
-            "No narration was found in Gemini's response."
+            "No narration was found in the generated scripts."
         )
 
     first_narration = narrations[0]
@@ -549,8 +592,7 @@ def save_first_narration(narrations):
     if len(first_narration) < 40:
 
         raise RuntimeError(
-            "The first narration is too short. "
-            "Please check Gemini's generated response."
+            "The first narration is too short."
         )
 
     content = (
@@ -600,19 +642,20 @@ def main():
 
     save_all_scripts(full_scripts)
 
-    print("\nSTEP 3: Extracting narration...")
+    print("\nSTEP 3: Extracting narrations...")
 
     narrations = extract_narrations(full_scripts)
 
     print(
-        f"Successfully extracted {len(narrations)} narration(s)."
+        f"Successfully extracted "
+        f"{len(narrations)} narration(s)."
     )
 
     if len(narrations) < 5:
 
         print(
-            "WARNING: Gemini returned fewer than five "
-            "complete narrations."
+            "WARNING: Fewer than five narrations "
+            "were generated."
         )
 
     print("\nSTEP 4: Preparing video generator...")
@@ -624,7 +667,7 @@ def main():
     print("==========================================")
 
     print("Creator topics collected.")
-    print("AI scripts generated.")
+    print("Scripts generated or backup scripts prepared.")
     print("First narration prepared.")
     print("Ready for video_creator.py.")
 
