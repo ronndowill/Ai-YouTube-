@@ -24,7 +24,7 @@ def get_narration():
     match = re.search(
         r"Original narration[^\n]*\n(.*?)(?=\n\s*(?:4[.)]|Suggested visual scenes|Visual scenes)|\Z)",
         text,
-        re.I | re.S
+        re.I | re.S,
     )
 
     if not match:
@@ -39,28 +39,128 @@ def get_narration():
 
 
 def make_frame(caption, number, total, path):
-    image = Image.new("RGB", (W, H), (17, 24, 55))
+    image = Image.new("RGB", (W, H))
+    pixels = image.load()
+
+    # Modern dark gradient
+    for y in range(H):
+        t = y / H
+        color = (
+            int(8 + 10 * t),
+            int(13 + 13 * t),
+            int(31 + 31 * t),
+        )
+        for x in range(W):
+            pixels[x, y] = color
+
     draw = ImageDraw.Draw(image)
 
-    draw.ellipse((-200, 150, 450, 800), fill=(45, 65, 130))
-    draw.ellipse((700, 1150, 1300, 1750), fill=(20, 100, 120))
+    # Background grid
+    for x in range(0, W, 90):
+        draw.line((x, 0, x, H), fill=(22, 32, 57), width=1)
 
-    draw.text((85, 130), "TRENDCLIP DAILY", font=font(48), fill="white")
-    draw.text((85, 320), "THE INTERNET IS TALKING...",
-              font=font(32), fill=(100, 225, 255))
+    for y in range(0, H, 90):
+        draw.line((0, y, W, y), fill=(22, 32, 57), width=1)
 
-    lines = textwrap.wrap(caption, width=22)
-    line_height = 100
-    y = (H - len(lines) * line_height) // 2
+    draw.ellipse((760, 160, 1230, 630), fill=(17, 45, 82))
+    draw.ellipse((-260, 1300, 330, 1890), fill=(13, 53, 70))
 
-    for line in lines:
-        box = draw.textbbox((0, 0), line, font=font(72))
-        x = (W - (box[2] - box[0])) // 2
-        draw.text((x, y), line, font=font(72), fill="white")
+    # Channel branding
+    draw.rounded_rectangle(
+        (66, 92, 1014, 198),
+        radius=34,
+        fill=(21, 33, 60),
+        outline=(54, 91, 145),
+        width=3,
+    )
+
+    draw.text((105, 119), "TRENDCLIP", font=font(42), fill="white")
+    draw.text((420, 128), "DAILY", font=font(34), fill=(75, 220, 255))
+
+    draw.text(
+        (82, 300),
+        "THE INTERNET IS TALKING",
+        font=font(30),
+        fill=(105, 205, 235),
+    )
+
+    # Main caption panel
+    draw.rounded_rectangle(
+        (58, 560, 1022, 1350),
+        radius=48,
+        fill=(17, 27, 51),
+        outline=(63, 91, 135),
+        width=4,
+    )
+
+    words = caption.split()
+
+    main_text = " ".join(words[:-1]) if len(words) > 1 else ""
+    accent = words[-1] if words else ""
+
+    lines = textwrap.wrap(main_text, width=19) if main_text else []
+
+    if accent:
+        lines.append(accent)
+
+    line_height = 112
+    y = 560 + (790 - len(lines) * line_height) // 2
+
+    for index, line in enumerate(lines):
+        selected_font = font(76 if len(line) < 17 else 66)
+
+        bounds = draw.textbbox((0, 0), line, font=selected_font)
+        x = (W - (bounds[2] - bounds[0])) // 2
+
+        color = (
+            (75, 220, 255)
+            if index == len(lines) - 1
+            else "white"
+        )
+
+        draw.text(
+            (x, y),
+            line,
+            font=selected_font,
+            fill=color,
+            stroke_width=1,
+            stroke_fill=(5, 10, 24),
+        )
+
         y += line_height
 
-    draw.text((85, 1720), "FOLLOW FOR MORE TRENDS",
-              font=font(34), fill=(180, 230, 255))
+    draw.text(
+        (82, 1465),
+        "TREND ALERT",
+        font=font(32),
+        fill=(75, 220, 255),
+    )
+
+    draw.text(
+        (82, 1710),
+        "FOLLOW FOR MORE INTERNET TRENDS",
+        font=font(29),
+        fill=(205, 222, 245),
+    )
+
+    # Progress bar
+    left, right, top, bottom = 82, 998, 1800, 1818
+
+    draw.rounded_rectangle(
+        (left, top, right, bottom),
+        radius=9,
+        fill=(49, 62, 88),
+    )
+
+    progress = int(
+        (number + 1) / max(total, 1) * (right - left)
+    )
+
+    draw.rounded_rectangle(
+        (left, top, left + progress, bottom),
+        radius=9,
+        fill=(75, 220, 255),
+    )
 
     image.save(path)
 
@@ -69,8 +169,9 @@ async def make_voice(text, path):
     voice = edge_tts.Communicate(
         text,
         VOICE,
-        rate="+4%"
+        rate="+4%",
     )
+
     await voice.save(str(path))
 
 
@@ -83,9 +184,10 @@ def main():
     asyncio.run(make_voice(narration, audio))
 
     words = narration.split()
+
     captions = [
-        " ".join(words[i:i + 9])
-        for i in range(0, len(words), 9)
+        " ".join(words[i:i + 7])
+        for i in range(0, len(words), 7)
     ]
 
     frames = OUT / "video_frames"
@@ -93,53 +195,76 @@ def main():
 
     paths = []
 
-    for i, caption in enumerate(captions):
-        path = frames / f"frame_{i:03}.png"
-        make_frame(caption, i, len(captions), path)
-        paths.append(path)
+    for index, caption in enumerate(captions):
+        frame_path = frames / f"frame_{index:03}.png"
+
+        make_frame(
+            caption,
+            index,
+            len(captions),
+            frame_path,
+        )
+
+        paths.append(frame_path)
 
     probe = subprocess.run(
         [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(audio)
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(audio),
         ],
         capture_output=True,
         text=True,
-        check=True
+        check=True,
     )
 
     duration = float(probe.stdout.strip()) / len(paths)
 
     concat = OUT / "frames.txt"
 
-    with concat.open("w") as file:
-        for path in paths:
-            file.write(f"file '{path.resolve()}'\n")
+    with concat.open("w", encoding="utf-8") as file:
+        for frame_path in paths:
+            file.write(f"file '{frame_path.resolve()}'\n")
             file.write(f"duration {duration:.4f}\n")
+
         file.write(f"file '{paths[-1].resolve()}'\n")
 
     video = OUT / "trendclip_first_short.mp4"
 
     subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", str(concat),
-            "-i", str(audio),
-            "-vf", "fps=30,format=yuv420p",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-c:a", "aac",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat),
+            "-i",
+            str(audio),
+            "-vf",
+            "zoompan=z='min(zoom+0.00035,1.06)':d=1:s=1080x1920:fps=30,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
             "-shortest",
-            "-movflags", "+faststart",
-            str(video)
+            "-movflags",
+            "+faststart",
+            str(video),
         ],
-        check=True
+        check=True,
     )
 
-    print("SUCCESS: First TrendClip Short created!")
+    print("SUCCESS: Updated TrendClip Daily Short created!")
     print(video)
 
 
