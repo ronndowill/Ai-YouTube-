@@ -22,14 +22,29 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run TrendClip AI
+      - name: Install video tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python packages
+        run: pip install -r Requirements.txt
+
+      - name: Generate trends and AI scripts
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python Main.py
 
-      - name: Save trend research files
+      - name: Create vertical YouTube Short
+        run: python video_creator.py
+
+      - name: Save generated files
         uses: actions/upload-artifact@v4
         with:
-          name: trendclip-daily-research
-          path: output/
-          if-no-files-found: warn
+          name: trendclip-daily-videos
+          path: |
+            output/*.mp4
+            output/*.mp3
+            output/*.txt
+            output/*.csv
+          if-no-files-found: error
