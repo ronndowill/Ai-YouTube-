@@ -24,24 +24,17 @@ def get_narration():
         encoding="utf-8"
     )
 
-    # Find narration even if Gemini changes the heading format.
     patterns = [
-        r"(?:original\s+)?narration\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested\s+visual|visual\s+scenes|on-screen\s+captions|description|fact-check)|\Z)",
-        r"(?:voiceover|voice-over|spoken\s+script)\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested\s+visual|visual\s+scenes|on-screen\s+captions|description|fact-check)|\Z)",
+        r"(?:original\s+)?narration\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested\s+visual|visual scenes|on-screen captions|description|fact-check)|\Z)",
+        r"(?:voiceover|voice-over|spoken script)\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested visual|visual scenes|on-screen captions|description|fact-check)|\Z)",
     ]
 
     for pattern in patterns:
-        match = re.search(
-            pattern,
-            script,
-            re.I | re.S
-        )
+        match = re.search(pattern, script, re.I | re.S)
 
         if match:
             narration = re.sub(
-                r"\s+",
-                " ",
-                match.group(1)
+                r"\s+", " ", match.group(1)
             ).strip()
 
             narration = re.sub(
@@ -53,71 +46,44 @@ def get_narration():
             if len(narration) >= 80:
                 return narration
 
-    # Fallback: find a numbered narration section.
-    lines = script.splitlines()
-
-    for i, line in enumerate(lines):
-        if re.search(
-            r"\bnarration\b|\bvoiceover\b|\bvoice-over\b",
-            line,
-            re.I
-        ):
-            collected = []
-
-            for next_line in lines[i + 1:]:
-                if re.match(
-                    r"\s*(?:4[.)]|5[.)]|6[.)]|7[.)]|suggested visual|visual scenes|on-screen captions|description|fact-check)",
-                    next_line,
-                    re.I
-                ):
-                    break
-
-                if next_line.strip():
-                    collected.append(next_line.strip())
-
-            narration = re.sub(
-                r"\s+",
-                " ",
-                " ".join(collected)
-            ).strip()
-
-            if len(narration) >= 80:
-                return narration
-
     raise RuntimeError(
-        "Could not find narration. "
-        "Check output/shorts_scripts.txt for the AI script format."
+        "Could not find narration in shorts_scripts.txt"
     )
 
 
-async def make_voice_and_timing(text, audio_path):
-    communicate = edge_tts.Communicate(
-        text,
-        VOICE,
-        rate="-5%"
-    )
+def split_captions(text, max_words=5):
+    words = text.split()
+    groups = []
+    current = []
 
-    boundaries = []
+    for word in words:
+        current.append(word)
 
-    with open(audio_path, "wb") as audio_file:
-        async for chunk in communicate.stream():
+        if len(current) >= max_words:
+            groups.append(" ".join(current))
+            current = []
 
-            if chunk["type"] == "audio":
-                audio_file.write(chunk["data"])
+    if current:
+        groups.append(" ".join(current))
 
-            elif chunk["type"] == "WordBoundary":
-                boundaries.append({
-                    "text": chunk["text"],
-                    "start": chunk["offset"] / 10_000_000,
-                    "duration": chunk["duration"] / 10_000_000
-                })
+    return groups
 
-    if not boundaries:
-        raise RuntimeError(
-            "Voice timing information was not received."
-        )
 
-    return boundaries
+def syllable_weight(text):
+    words = re.findall(r"[A-Za-z']+", text)
+    total = 0
+
+    for word in words:
+        clean = word.lower()
+        groups = re.findall(r"[aeiouy]+", clean)
+        count = max(1, len(groups))
+
+        if clean.endswith("e") and count > 1:
+            count -= 1
+
+        total += count
+
+    return max(total, 1)
 
 
 def make_frame(caption, number, total, path):
@@ -150,16 +116,6 @@ def make_frame(caption, number, total, path):
             fill=(22, 32, 57),
             width=1
         )
-
-    draw.ellipse(
-        (760, 160, 1230, 630),
-        fill=(17, 45, 82)
-    )
-
-    draw.ellipse(
-        (-260, 1300, 330, 1890),
-        fill=(13, 53, 70)
-    )
 
     draw.rounded_rectangle(
         (66, 92, 1014, 198),
@@ -276,6 +232,33 @@ def make_frame(caption, number, total, path):
     image.save(path)
 
 
+async def create_voice(text, audio_path):
+    communicate = edge_tts.Communicate(
+        text,
+        VOICE,
+        rate="-5%"
+    )
+
+    await communicate.save(str(audio_path))
+
+
+def get_audio_duration(audio_path):
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(audio_path)
+        ],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+
+    return float(result.stdout.strip())
+
+
 def main():
     OUT.mkdir(exist_ok=True)
 
@@ -286,28 +269,35 @@ def main():
 
     audio = OUT / "voiceover.mp3"
 
-    boundaries = asyncio.run(
-        make_voice_and_timing(
-            narration,
-            audio
-        )
+    asyncio.run(
+        create_voice(narration, audio)
     )
 
-    groups = [
-        boundaries[i:i + 4]
-        for i in range(0, len(boundaries), 4)
-    ]
+    if not audio.exists() or audio.stat().st_size == 0:
+        raise RuntimeError("Voiceover audio was not created.")
+
+    print("Voiceover saved successfully.")
+
+    audio_duration = get_audio_duration(audio)
+
+    if audio_duration <= 0:
+        raise RuntimeError("Audio duration could not be measured.")
+
+    groups = split_captions(narration)
+
+    if not groups:
+        raise RuntimeError("No caption groups were created.")
+
+    weights = [syllable_weight(group) for group in groups]
+    total_weight = sum(weights)
 
     frames = OUT / "video_frames"
+
     frames.mkdir(exist_ok=True)
 
     paths = []
 
-    for index, group in enumerate(groups):
-        caption = " ".join(
-            item["text"] for item in group
-        )
-
+    for index, caption in enumerate(groups):
         frame_path = frames / f"frame_{index:03}.png"
 
         make_frame(
@@ -319,45 +309,18 @@ def main():
 
         paths.append(frame_path)
 
-    probe = subprocess.run(
-        [
-            "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(audio)
-        ],
-        capture_output=True,
-        text=True,
-        check=True
-    )
-
-    audio_duration = float(
-        probe.stdout.strip()
-    )
-
     concat = OUT / "frames.txt"
 
-    with concat.open(
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        for index, group in enumerate(groups):
-            start = group[0]["start"]
-
-            if index + 1 < len(groups):
-                end = groups[index + 1][0]["start"]
-            else:
-                end = audio_duration
-
-            duration = max(
-                0.5,
-                end - start
+    with concat.open("w", encoding="utf-8") as file:
+        for index, path in enumerate(paths):
+            duration = (
+                audio_duration
+                * weights[index]
+                / total_weight
             )
 
             file.write(
-                f"file '{paths[index].resolve()}'\n"
+                f"file '{path.resolve()}'\n"
             )
 
             file.write(
@@ -370,7 +333,7 @@ def main():
 
     video = OUT / "trendclip_first_short.mp4"
 
-    print("Rendering synchronized video...")
+    print("Rendering TrendClip Daily video...")
 
     subprocess.run(
         [
@@ -382,22 +345,23 @@ def main():
             "-i", str(audio),
             "-map", "0:v:0",
             "-map", "1:a:0",
-            "-vf", "format=yuv420p",
+            "-vf", "fps=30,format=yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-c:a", "aac",
+            "-b:a", "128k",
             "-t", str(audio_duration),
-            "-fps_mode", "vfr",
+            "-shortest",
             "-movflags", "+faststart",
             str(video)
         ],
         check=True
     )
 
-    print(
-        "SUCCESS: Synchronized TrendClip Daily video created!"
-    )
+    if not video.exists() or video.stat().st_size == 0:
+        raise RuntimeError("The final video was not created.")
 
+    print("SUCCESS: TrendClip Daily video created!")
     print(video)
 
 
