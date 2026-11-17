@@ -24,3 +24,9 @@ jobs:
 
       - name: Run TrendClip AI
         run: python Main.py
+              - name: Save trend research files
+        uses: actions/upload-artifact@v4
+        with:
+          name: trendclip-daily-research
+          path: output/
+          if-no-files-found: warn
