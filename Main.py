@@ -137,13 +137,28 @@ def create_ai_scripts(trends):
     )
 
     prompt = f"""
-You are the scriptwriter for TrendClip Daily,
-a YouTube Shorts channel.
+You are the professional scriptwriter
+for TrendClip Daily, an English-language
+YouTube Shorts channel.
 
 Create one original YouTube Shorts script
 for each of these five trend leads:
 
 {topic_list}
+
+LANGUAGE REQUIREMENTS:
+- Write EVERYTHING in natural English.
+- Use American English spelling and grammar.
+- Titles must be English.
+- Narration must be English.
+- Captions must be English.
+- Descriptions must be English.
+- Hashtags must be appropriate for an
+  English-language audience.
+- Never insert foreign-language phrases,
+  subtitles, or translations.
+- Do not mix languages.
+- Use clear, simple wording.
 
 For EACH topic provide:
 
@@ -158,7 +173,7 @@ For EACH topic provide:
 7. A fact-check note listing what needs
    verification before publishing.
 
-Important rules:
+IMPORTANT RULES:
 - Treat trends as research leads,
   not verified facts.
 - Never invent facts, quotes, dates,
@@ -172,6 +187,8 @@ Important rules:
 - Make scripts engaging, natural,
   and easy to narrate.
 - Separate each script clearly.
+- Keep narration suitable for spoken English.
+- Avoid unusual symbols and complicated words.
 """
 
     payload = {
@@ -185,7 +202,8 @@ Important rules:
             }
         ],
         "generationConfig": {
-            "maxOutputTokens": 6000
+            "maxOutputTokens": 6000,
+            "temperature": 0.7
         }
     }
 
@@ -195,20 +213,19 @@ Important rules:
         f"{MODEL}:generateContent"
     )
 
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key
-        },
-        method="POST"
-    )
-
-    # Automatically retry temporary Gemini errors.
     result = None
 
     for attempt in range(5):
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key
+            },
+            method="POST"
+        )
+
         try:
             print(
                 f"Contacting Gemini "
@@ -238,9 +255,7 @@ Important rules:
                 error.code in (429, 500, 502, 503, 504)
                 and attempt < 4
             ):
-                wait_seconds = (
-                    15 * (2 ** attempt)
-                )
+                wait_seconds = 15 * (2 ** attempt)
 
                 print(
                     f"Gemini temporarily unavailable "
@@ -248,8 +263,7 @@ Important rules:
                 )
 
                 print(
-                    f"Waiting {wait_seconds} seconds "
-                    f"before retrying..."
+                    f"Retrying in {wait_seconds} seconds..."
                 )
 
                 time.sleep(wait_seconds)
@@ -265,9 +279,7 @@ Important rules:
         except urllib.error.URLError as error:
 
             if attempt < 4:
-                wait_seconds = (
-                    15 * (2 ** attempt)
-                )
+                wait_seconds = 15 * (2 ** attempt)
 
                 print(
                     "Gemini connection problem:",
@@ -298,8 +310,7 @@ Important rules:
 
     if not candidates:
         raise RuntimeError(
-            "Gemini returned no script candidates. "
-            "The response may have been blocked."
+            "Gemini returned no script candidates."
         )
 
     parts = candidates[0].get(
@@ -326,6 +337,7 @@ Important rules:
 
 def main():
     print("TRENDCLIP DAILY")
+    print("ENGLISH-ONLY SCRIPT GENERATION")
 
     print(
         "Research:",
@@ -395,9 +407,7 @@ def main():
         len(trends)
     )
 
-    scripts = create_ai_scripts(
-        trends
-    )
+    scripts = create_ai_scripts(trends)
 
     with open(
         "output/shorts_scripts.txt",
@@ -411,13 +421,8 @@ def main():
 
         file.write(scripts)
 
-    print(
-        "AI scripts successfully created!"
-    )
-
-    print(
-        "Results saved in output/"
-    )
+    print("AI scripts successfully created!")
+    print("Results saved in output/")
 
 
 if __name__ == "__main__":
