@@ -1,5 +1,6 @@
 
 import asyncio
+import re
 import subprocess
 from pathlib import Path
 
@@ -15,6 +16,77 @@ def font(size):
     return ImageFont.truetype(
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         size
+    )
+
+
+def get_narration():
+    script = (OUT / "shorts_scripts.txt").read_text(
+        encoding="utf-8"
+    )
+
+    # Find narration even if Gemini changes the heading format.
+    patterns = [
+        r"(?:original\s+)?narration\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested\s+visual|visual\s+scenes|on-screen\s+captions|description|fact-check)|\Z)",
+        r"(?:voiceover|voice-over|spoken\s+script)\s*[:\-]*\s*\n(.*?)(?=\n\s*(?:4[.)]|suggested\s+visual|visual\s+scenes|on-screen\s+captions|description|fact-check)|\Z)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            script,
+            re.I | re.S
+        )
+
+        if match:
+            narration = re.sub(
+                r"\s+",
+                " ",
+                match.group(1)
+            ).strip()
+
+            narration = re.sub(
+                r"^(?:\d+[.)]\s*)+",
+                "",
+                narration
+            )
+
+            if len(narration) >= 80:
+                return narration
+
+    # Fallback: find a numbered narration section.
+    lines = script.splitlines()
+
+    for i, line in enumerate(lines):
+        if re.search(
+            r"\bnarration\b|\bvoiceover\b|\bvoice-over\b",
+            line,
+            re.I
+        ):
+            collected = []
+
+            for next_line in lines[i + 1:]:
+                if re.match(
+                    r"\s*(?:4[.)]|5[.)]|6[.)]|7[.)]|suggested visual|visual scenes|on-screen captions|description|fact-check)",
+                    next_line,
+                    re.I
+                ):
+                    break
+
+                if next_line.strip():
+                    collected.append(next_line.strip())
+
+            narration = re.sub(
+                r"\s+",
+                " ",
+                " ".join(collected)
+            ).strip()
+
+            if len(narration) >= 80:
+                return narration
+
+    raise RuntimeError(
+        "Could not find narration. "
+        "Check output/shorts_scripts.txt for the AI script format."
     )
 
 
@@ -42,8 +114,7 @@ async def make_voice_and_timing(text, audio_path):
 
     if not boundaries:
         raise RuntimeError(
-            "No voice timing information was received. "
-            "Cannot safely create synchronized captions."
+            "Voice timing information was not received."
         )
 
     return boundaries
@@ -129,7 +200,6 @@ def make_frame(caption, number, total, path):
 
     words = caption.split()
     lines = []
-
     current = ""
 
     for word in words:
@@ -147,7 +217,7 @@ def make_frame(caption, number, total, path):
     line_height = 112
     y = 560 + (790 - len(lines) * line_height) // 2
 
-    for index, line in enumerate(lines):
+    for line in lines:
         selected_font = font(
             76 if len(line) < 17 else 66
         )
@@ -209,44 +279,20 @@ def make_frame(caption, number, total, path):
 def main():
     OUT.mkdir(exist_ok=True)
 
-    script_file = OUT / "shorts_scripts.txt"
+    narration = get_narration()
 
-    if not script_file.exists():
-        raise RuntimeError("AI scripts file is missing.")
-
-    text = script_file.read_text(encoding="utf-8")
-
-    import re
-
-    match = re.search(
-        r"Original narration[^\n]*\n(.*?)(?=\n\s*(?:4[.)]|Suggested visual scenes|Visual scenes)|\Z)",
-        text,
-        re.I | re.S
-    )
-
-    if not match:
-        raise RuntimeError(
-            "Could not find the original narration."
-        )
-
-    narration = re.sub(
-        r"\s+",
-        " ",
-        match.group(1)
-    ).strip()
-
-    if len(narration) < 80:
-        raise RuntimeError("Narration is too short.")
+    print("Narration found successfully.")
+    print("Creating English voiceover...")
 
     audio = OUT / "voiceover.mp3"
 
-    print("Creating English voiceover and word timings...")
-
     boundaries = asyncio.run(
-        make_voice_and_timing(narration, audio)
+        make_voice_and_timing(
+            narration,
+            audio
+        )
     )
 
-    # Group four actual spoken words per caption.
     groups = [
         boundaries[i:i + 4]
         for i in range(0, len(boundaries), 4)
@@ -286,11 +332,17 @@ def main():
         check=True
     )
 
-    audio_duration = float(probe.stdout.strip())
+    audio_duration = float(
+        probe.stdout.strip()
+    )
 
     concat = OUT / "frames.txt"
 
-    with concat.open("w", encoding="utf-8") as file:
+    with concat.open(
+        "w",
+        encoding="utf-8"
+    ) as file:
+
         for index, group in enumerate(groups):
             start = group[0]["start"]
 
@@ -299,7 +351,10 @@ def main():
             else:
                 end = audio_duration
 
-            duration = max(0.5, end - start)
+            duration = max(
+                0.5,
+                end - start
+            )
 
             file.write(
                 f"file '{paths[index].resolve()}'\n"
@@ -315,7 +370,7 @@ def main():
 
     video = OUT / "trendclip_first_short.mp4"
 
-    print("Building synchronized caption video...")
+    print("Rendering synchronized video...")
 
     subprocess.run(
         [
@@ -339,7 +394,10 @@ def main():
         check=True
     )
 
-    print("SUCCESS: Synchronized TrendClip Daily video created!")
+    print(
+        "SUCCESS: Synchronized TrendClip Daily video created!"
+    )
+
     print(video)
 
 
